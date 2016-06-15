@@ -1,6 +1,6 @@
 /*	CoffeeRoaster.c - 5/14/2016 1:29:19 PM
- *	
- *	I acknowledge all content contained herein, excluding template or example 
+ *	By Tyson Loveless
+ *	I acknowledge all content contained herein, excluding template, notated headers or example 
  *	code, is my own original work.
  */ 
 
@@ -17,17 +17,28 @@
 #include "timer.h"
 #include "coffeestart.h"     //intro graphic
 #include "coffeefinish.h"    //finish graphic
+
+//set debugging mode: 1, turn off: 0
+//saves space on chip if turned off
+#define DEBUGGING 0
+#if (DEBUGGING)
+	#include "ftoa.h"
+	#include "math.h"
+#endif
+
+#define TIMEDIV 60
+
 //define which channel the thermoprobes are in
-
-
 //set prior to starting to ensure probes are in correct channel
-#define BEANMASS    1         
-#define BASE        0
+#define BEANMASS    0         
+#define BASE        1
+
 
 //--------Shared Variables----------------------------------------------------
 	//for the temperatures
 	int tmpBeanMass;
 	int tmpBase;
+	int last_temp;
 	
 	//flags
 	char on;
@@ -37,47 +48,67 @@
 	
 	//variables for the roast profiles
 	//---------------------------------
-	//roast profiles
-	#define num_profiles 4
-	unsigned short roast[num_profiles][4] = {
-		{ 211, 306, 400, 426 },  //city
-		{ 210, 340, 400, 436 },  //city+
-		{ 200, 270, 394, 444 },   //full city
-		{ 100, 110, 210, 230 }   //test
-	};
+			//roast profiles
+			#define num_profiles 5
+			unsigned short roast[num_profiles][4] = {
+				{ 211, 306, 400, 426 },  //city
+				{ 210, 340, 400, 436 },  //city+
+				{ 200, 270, 394, 444 },  //full city
+				{ 100, 110, 210, 230 },   //demo
+				{ 100, 500, 300, 100 } //demo 2
+			};
 	
-	char *roast_name[num_profiles] = {
-		"  City   ",
-		"  City+  ",
-		"Full City",
-		"  Demo   "
-	};
+			char *roast_name[num_profiles] = {
+				"  City   ",
+				"  City+  ",
+				"Full City",
+				"  Demo   ",
+				" Demo 2  "
+			};
+			
+			char *label[4] = {
+				"FirstRamp  ",
+				"FirstShelf ",
+				"2nd Ramp   ",
+				"2nd Shelf  "
+			};
+			
+			char length[4] = {
+				2, 2, 4, 4
+			};
 	
-	enum PHASE {Waiting, Heating, Cooling } phase;
+			enum PHASE {Waiting, Heating, Cooling } phase;
 	
-	// indexes for the profiles:
-	#define RAMP1TEMP 0
-	#define SHELF1TEMP 1
-	#define RAMP2TEMP 2
-	#define SHELF2TEMP 3
+			// indexes for the profiles:
+			#define RAMP1TEMP 0
+			#define SHELF1TEMP 1
+			#define RAMP2TEMP 2
+			#define SHELF2TEMP 3
 		
 	
 	//variables for PID function
 	//-------------------------
-	const int WindowSize = 255;
-	unsigned long windowStartTime;
+			const int WindowSize = 255;
+			unsigned long windowStartTime;//, currentMillis, previousMillis, TSwitch, TStart;
+			//char currentTriacPower=0;
+			//int seconds;
 
-	//Define Variables we'll be connecting to
-	double Setpoint, Input, Output;
+			//Define Variables we'll be connecting to
+			double Setpoint, Input, Output;
 
-	//Define the aggressive and conservative Tuning Parameters
-	double aggKp=4, aggKi=0.2, aggKd=1;
-	double consKp=1, consKi=0.05, consKd=0.25;
+			//Define the aggressive and conservative Tuning Parameters
+			double aggKp=4, aggKi=0.2, aggKd=1;
+			double consKp=1, consKi=0.05, consKd=0.25;
 	
-	// Tuning parameters
-	float Kp=2; 			//Initial Proportional Gain
-	float Ki=5; 			//Initial Integral Gain
-	float Kd=1; 			//Initial Differential Gain
+			// Tuning parameters
+			float Kp=2; 			//Initial Proportional Gain
+			float Ki=5; 			//Initial Integral Gain
+			float Kd=1; 			//Initial Differential Gain
+	
+			//function that calls PID function
+			void update(int max_temp, double rampRate, unsigned long startTime, int startTemp, unsigned long endTime);
+			
+			void updateTime();
 			
 //--------End Shared Variables------------------------------------------------
 
@@ -95,7 +126,7 @@ ISR(INT0_vect)
 	PORTA = 0x00;
 }
 
-void update(int);
+
 
 //--------User defined FSMs---------------------------------------------------
 int SMTimer_Tick(int state);			//time of operation
@@ -103,6 +134,7 @@ int SMTemp_BM_Tick(int state);			//temp of the bean mass
 int SMTemp_Base_Tick(int state);		//temp of the base
 int SMHeat_Tick(int state);				//PWM of heater
 int SMInput_Tick(int state);			//get input from user
+int SMUpdatePID_Tick(int state);		//update the setpoint and PWM input
 
 
 //--------State Machine Definitions----------------------------------------------------
@@ -188,73 +220,57 @@ int SMTimer_Tick(int state) {
 	
 	switch (state) {
 		case SMTimer_displayTime:		if (on && !finished) {
-											milliOnes += 0x01;
-											if (milliOnes >= 10){
-												milliTens += 1;
-												milliOnes = 0;
-												lcd_goto_xy(9, 2);
-												lcd_chr('0' + milliTens);
-												lcd_chr('0' + milliOnes);
-												if (milliTens >= 10) {
-													secondOnes += 1;
-													milliTens = 0;
-													lcd_goto_xy(7, 2);
-													lcd_chr('0' + secondOnes);
-													lcd_goto_xy(9, 2);
-													lcd_chr('0' + milliTens);
-													if (secondOnes >= 10) {
-														secondTens += 1;
-														secondOnes = 0;
-														lcd_goto_xy(6, 2);
-														lcd_chr('0' + secondTens);
-														lcd_chr('0' + secondOnes);
-														if (secondTens >= 6) {
-															minuteOnes += 1;
-															secondTens = 0;
-															lcd_goto_xy(4, 2);
-															lcd_chr('0' + minuteOnes);
-															lcd_goto_xy(6, 2);
-															lcd_chr('0' + secondTens);
-															if (minuteOnes >= 10) {
-																minuteTens += 1;
-																minuteOnes = 0;
-																lcd_goto_xy(3, 2);
-																lcd_chr('0' + minuteTens);
-																lcd_chr('0' + minuteOnes);
-													
-															}
-														}
-													}
-												}
+											updateTime();  //displays the roasting time on the LCD display
+											lcd_goto_xy(2, 1);
+											if (phase == Heating || phase == Waiting) {
+												lcd_str("  Heating  ");
 											}
-											lcd_goto_xy(10, 2);
-											lcd_chr('0' + milliOnes);	
+											else if (phase == Cooling) {
+												lcd_str("  Cooling  ");
+											}
 										}
 										else {
 											state = -1;
-											//lcd_clear_line(2);
 										}
 										break;
 								
-		default:						if (on && !finished) {
-											state = SMTimer_displayTime;
-											minuteOnes = 0;
-											minuteTens = 0;
-											secondOnes = 0;
-											secondTens = 0;
-											milliOnes = 0;
-											milliTens = 0;
-											lcd_goto_xy(4, 2);
-											lcd_chr('0' + minuteOnes);
-											lcd_chr(':');
-											lcd_chr('0' + secondTens);
-											lcd_chr('0' + secondOnes);
-											lcd_chr(':');
-											lcd_chr('0' + milliTens);
-											lcd_chr('0' + milliOnes);
+		default:						if (!finished) {
+											if (on) {
+												state = SMTimer_displayTime;
+												minuteOnes = 0;
+												minuteTens = 0;
+												secondOnes = 0;
+												secondTens = 0;
+												milliOnes = 0;
+												milliTens = 0;
+												lcd_goto_xy(4, 2);
+												lcd_chr('0' + minuteOnes);
+												lcd_chr(':');
+												lcd_chr('0' + secondTens);
+												lcd_chr('0' + secondOnes);
+												lcd_chr(':');
+												lcd_chr('0' + milliTens);
+												lcd_chr('0' + milliOnes);
+												lcd_goto_xy(2, 1);
+												if (phase == Heating || phase == Waiting) {
+													lcd_str("  Heating  ");
+												}
+												else if (phase == Cooling) {
+													lcd_str("  Cooling  ");
+												}
+											}
+											else {
+												lcd_goto_xy(2, 1);
+												if (phase == Cooling) {
+													lcd_str("  Cooling  ");
+												}
+												else
+												lcd_str("Make Choice");
+											}
 										}
 										break;
 	}
+	/*
 	lcd_goto_xy(2, 1);
 	if (!finished) {
 		if (on) {
@@ -272,7 +288,7 @@ int SMTimer_Tick(int state) {
 			else
 			lcd_str("Make Choice");
 		}
-	}
+	}*/
 	
 	return state;
 }
@@ -285,9 +301,9 @@ int SMTimer_Tick(int state) {
  *     engage if the roaster is hotter than it ought to be depending on 
  *     the state of inputs.
  ----------------------------------------------------------------------------*/
-enum SMInput { SMInput_Wait, SMInput_ButtonPress, SMInput_Start, SMInput_WaitforCool };
+enum SMInput { SMInput_Init, SMInput_Wait, SMInput_ButtonPress, SMInput_Start, SMInput_WaitforCool };
 int SMInput_Tick(int state) {
-	static unsigned char roastBtn, startSwitch;
+	static unsigned char roastBtn, startSwitch, i;
 	
 	char tempELabel[] = {"E_Temp:"};
 	char tempBMLabel[] = {"BM_Temp:"};
@@ -297,6 +313,19 @@ int SMInput_Tick(int state) {
 	startSwitch = PINC & 0x01;
 	
 	switch(state){
+		case SMInput_Init:			if (i-- <= 0) {
+										lcd_clear();
+										state = SMInput_Wait;
+										profile = on = 0;
+										lcd_goto_xy(3, 3);
+										lcd_string_format((char*)tempELabel);
+										lcd_goto_xy(2, 4);
+										lcd_string_format((char*)tempBMLabel);
+										lcd_goto_xy(3, 5);
+										lcd_str(roast_name[profile]);
+									}
+									break;
+		
 		case SMInput_Wait:			if (startSwitch) {
 										state = SMInput_Start;
 										on = 1;
@@ -341,17 +370,9 @@ int SMInput_Tick(int state) {
 											}
 										}
 									else {
+										state = SMInput_Init;
 										printPictureOnLCD(initPic);
-										delay_ms(1000);
-										lcd_clear();
-										state = SMInput_Wait;
-										profile = on = 0;
-										lcd_goto_xy(3, 3);
-										lcd_string_format((char*)tempELabel);
-										lcd_goto_xy(2, 4);
-										lcd_string_format((char*)tempBMLabel);
-										lcd_goto_xy(3, 5);
-										lcd_str(roast_name[profile]);
+										i = 20;
 									}
 									break;
 	}
@@ -367,24 +388,34 @@ int SMInput_Tick(int state) {
  *    selected roast profile.
  *    
  ----------------------------------------------------------------------------*/
-enum SMHeat_PWM { SMHeat_Wait, SMHeat_FirstRamp, SMHeat_FirstShelf, SMHeat_SecondRamp, SMHeat_SecondShelf, SMHeat_Cool };
+enum SMHeat_PWM { SMHeat_Wait, SMHeat_Cool, SMHeat_Heat }; //SMHeat_FirstRamp, SMHeat_FirstShelf, SMHeat_SecondRamp, SMHeat_SecondShelf,
 int SMHeat_Tick(int state) {
  
 	static int max_temp; //in degrees F
-	//static short endTime; //in minutes
-	//static int ramp_rate; //in degrees F/min
-	//static short startTime; //in milliseconds
+	static int startTemp; //in degrees F
+	static double ramp_rate; //in degrees F/sec
+	static unsigned long startTime; //in seconds
+	static unsigned long endTime;	//in seconds
 	
+	static unsigned char i; //index
+
 	switch(state) {
 		case SMHeat_Wait:				if (on) {
-											state = SMHeat_FirstRamp;
+											state = SMHeat_Heat;//SMHeat_FirstRamp;
 											phase = Heating;
+											i = 0;
 											lcd_goto_xy(1,0);
-											lcd_str("FirstRamp  ");
-											max_temp = roast[profile][RAMP1TEMP];
-											//ramp_rate = (max_temp-tmpBeanMass)/2;
-											//startTime = millis();
-											//endTime = startTime + ((max_temp-tmpBeanMass)/ramp_rate)*60000;
+											lcd_str(label[i]);
+//											lcd_str("FirstRamp  ");
+											max_temp = roast[profile][i];
+//											max_temp = roast[profile][RAMP1TEMP];
+											last_temp = startTemp = tmpBeanMass;
+											ramp_rate = (double)(max_temp-startTemp)/(double)(length[i]*TIMEDIV);
+//											ramp_rate = (double)(max_temp-startTemp)/(double)(2*TIMEDIV);
+											startTime = seconds();	
+											endTime = startTime + length[i]*TIMEDIV;
+//											endTime = startTime + 2*TIMEDIV;
+											PWM_on();
 										}
 										else if (!finished) {
 											if (tmpBeanMass > 110)
@@ -398,23 +429,24 @@ int SMHeat_Tick(int state) {
 										}
 										break;
 										
-		case SMHeat_FirstRamp:			if (tmpBeanMass >= max_temp) {
-											state = SMHeat_FirstShelf;
+		case SMHeat_Heat:				if (tmpBeanMass >= max_temp-4) {
 											lcd_goto_xy(1,0);
-											lcd_str("FirstShelf ");
-											max_temp = roast[profile][SHELF1TEMP];
-											//ramp_rate = (max_temp-tmpBeanMass)/2;
-											//startTime = millis();
-											//endTime = startTime + ((max_temp-tmpBeanMass)/ramp_rate)*60000;
+											i++;
+											lcd_str(label[i]);
+											max_temp = roast[profile][i];
+											last_temp = startTemp = tmpBeanMass;
+											ramp_rate = (double)(max_temp-startTemp)/(double)(length[i]*TIMEDIV);
+											startTime = seconds();
+											endTime = startTime + length[i]*TIMEDIV;
 										}
 										if (!on) {
+											PWM_off();
 											if (tmpBeanMass > 100)
 											{
 												state = SMHeat_Cool;
 												lcd_goto_xy(1,0);
 												lcd_str("Early Term!");
 												phase = Cooling;
-												PWM_off();
 											}
 											else {
 												state = -1;
@@ -423,25 +455,58 @@ int SMHeat_Tick(int state) {
 												phase = Waiting;
 											}
 										}
+										update(max_temp, ramp_rate, startTime, startTemp, endTime);
 										break;
-								
-		case SMHeat_FirstShelf:			if (tmpBeanMass >= max_temp) {
-											state = SMHeat_SecondRamp;
+										
+/*		case SMHeat_FirstRamp:			if (tmpBeanMass >= max_temp-4) {
+											state = SMHeat_FirstShelf;
 											lcd_goto_xy(1,0);
-											lcd_str("2nd Ramp   ");
-											max_temp = roast[profile][RAMP2TEMP];
-											//ramp_rate = (max_temp-tmpBeanMass)/4;
-											//startTime = millis();
-											//endTime = startTime + ((max_temp-tmpBeanMass)/ramp_rate)*60000;
+											lcd_str("FirstShelf ");
+											max_temp = roast[profile][SHELF1TEMP];
+											last_temp = tmpBeanMass;
+											startTemp = tmpBeanMass;
+											ramp_rate = (double)(max_temp-startTemp)/(double)(2*TIMEDIV);
+											startTime = seconds();
+											endTime = startTime + 2*TIMEDIV;
 										}
 										if (!on) {
+											PWM_off();
 											if (tmpBeanMass > 100)
 											{
 												state = SMHeat_Cool;
 												lcd_goto_xy(1,0);
 												lcd_str("Early Term!");
 												phase = Cooling;
-												PWM_off();
+											}
+											else {
+												state = -1;
+												lcd_goto_xy(1,0);
+												lcd_str("           ");
+												phase = Waiting;
+											}
+										}
+										update(max_temp, ramp_rate, startTime, startTemp, endTime);
+										break;
+								
+		case SMHeat_FirstShelf:			if (tmpBeanMass >= max_temp-4) {
+											state = SMHeat_SecondRamp;
+											lcd_goto_xy(1,0);
+											lcd_str("2nd Ramp   ");
+											max_temp = roast[profile][RAMP2TEMP];
+											last_temp = tmpBeanMass;
+											startTemp = tmpBeanMass;
+											ramp_rate = (double)(max_temp-startTemp)/(double)(4*TIMEDIV);
+											startTime = seconds();
+											endTime = startTime + 4*TIMEDIV;
+										}
+										if (!on) {
+											PWM_off();
+											if (tmpBeanMass > 100)
+											{
+												state = SMHeat_Cool;
+												lcd_goto_xy(1,0);
+												lcd_str("Early Term!");
+												phase = Cooling;
 											}
 											else {
 												state = -1;
@@ -450,25 +515,28 @@ int SMHeat_Tick(int state) {
 												phase = Waiting;
 											}
 										}
+										update(max_temp, ramp_rate, startTime, startTemp, endTime);
 										break;
 										
-		case SMHeat_SecondRamp:			if (tmpBeanMass >= max_temp) {
+		case SMHeat_SecondRamp:			if (tmpBeanMass >= max_temp-4) {
 											state = SMHeat_SecondShelf;
 											lcd_goto_xy(1,0);
 											lcd_str("2nd Shelf  ");
  											max_temp = roast[profile][SHELF2TEMP];
- 											//ramp_rate = (max_temp-tmpBeanMass)/4;
-// 											startTime = millis();
-// 											endTime = startTime + ((max_temp-tmpBeanMass)/ramp_rate)*60000;
+											last_temp = tmpBeanMass;
+											startTemp = tmpBeanMass;
+											ramp_rate = (double)(max_temp-startTemp)/(double)(4*TIMEDIV);
+ 											startTime = seconds();
+ 											endTime = startTime + 4*TIMEDIV;
 										}
 										if (!on) {
+											PWM_off();
 											if (tmpBase > 100)
 											{
 												state = SMHeat_Cool;
 												lcd_goto_xy(1,0);
 												lcd_str("Early Term!");
 												phase = Cooling;
-												PWM_off();
 											}
 											else {
 												state = -1;
@@ -477,10 +545,11 @@ int SMHeat_Tick(int state) {
 												phase = Waiting;
 											}
 										}
+										update(max_temp, ramp_rate, startTime, startTemp, endTime);
 										break;
 										
 										
-		case SMHeat_SecondShelf:		if (tmpBeanMass >= max_temp) {
+		case SMHeat_SecondShelf:		if (tmpBeanMass >= max_temp-4) {
 											state = SMHeat_Cool;
 											lcd_goto_xy(1,0);
 											lcd_str("CoolingStage ");
@@ -488,6 +557,7 @@ int SMHeat_Tick(int state) {
 											PWM_off();
 										}
 										if (!on) {
+											PWM_off();
 											if (tmpBeanMass > 100)
 											{
 												state = SMHeat_Cool;
@@ -502,8 +572,11 @@ int SMHeat_Tick(int state) {
 												phase = Waiting;
 											}
 										}
+										update(max_temp, ramp_rate, startTime, startTemp, endTime);
 										break;
 		
+		
+*/		
 		case SMHeat_Cool:				if (tmpBeanMass >= 100) {
 											PWM_off();
 										}
@@ -522,8 +595,8 @@ int SMHeat_Tick(int state) {
 											windowStartTime = millis();
 											PID_init(&Input, &Output, &Setpoint, Kp, Ki, Kd, DIRECT, 0, WindowSize);
 											PID_SetMode(AUTOMATIC);
-											max_temp = 100;
-											PWM_on();
+											//max_temp = 100;
+											//PWM_on();
 											DDRD |= 0x80; 
 											PORTD &= 0x7F;
 										}
@@ -531,15 +604,8 @@ int SMHeat_Tick(int state) {
 										
 	}
 	
-	
-	if (phase != Cooling && on) {
-		update(max_temp);
-	}
-	else PWM_off();
-	
 	return state;
 }
-
 
 
 
@@ -549,27 +615,119 @@ int SMHeat_Tick(int state) {
  *    If close to the setpoint, tunings are kept conservative 
  *
  ----------------------------------------------------------------------------*/
-void update(int max_temp){	
-	Setpoint = max_temp;
-	Input = tmpBeanMass;
+void update(int max_temp, double rampRate, unsigned long startTime, int startTemp, unsigned long endTime){	
+	
+	static double elapsedTime;
+	static double goal;
+	static char tmp[4];
+	if ((endTime - seconds()) < 15 && (tmpBeanMass - max_temp) > 30 )
+	{
+		set_PWM(255);
+		return;
+	}
+	elapsedTime = (seconds()-startTime);  //in seconds
+	if (rampRate != 0){
+		goal = startTemp + rampRate*elapsedTime;  // F + F/sec * sec = F
+	}
+	else
+		goal = startTemp + elapsedTime;  // F + F/sec * sec = F
+	
+	itoa(goal, tmp, 10);
+	lcd_goto_xy(3, 5);
+	lcd_str("Goal: ");
+	lcd_str(tmp);
+	lcd_str(" ");
+	
+	//debugging stuff
+	if (DEBUGGING) {
+		itoa((int)elapsedTime, tmp, 10);
+		lcd_str(tmp);
+		lcd_str(" ");
+		itoa(startTemp, tmp, 10);
+		lcd_str(tmp);
+		lcd_str(" ");
+		ftoa(rampRate, tmp, 10);
+		lcd_str(tmp);
+	}
+	//end debugging
+	
+	Setpoint = goal;
+	//int diff = (tmpBase-tmpBeanMass);
+	if ((tmpBase - 40) < tmpBeanMass) {  //tempBase always needs to be higher than tmpBeanMess
+									 // to ensure we do not lose momentum
+		Input = tmpBase;  
+	}
+	else
+		Input = tmpBeanMass;
+	
 	double gap = abs(Setpoint-Input); //distance away from setpoint
-	if (gap < 10)
+	if (gap < 8)
 	{  //we're close to setpoint, use conservative tuning parameters
 		PID_SetTunings(consKp, consKi, consKd);
 	}
 	else
 	{
-		//we're far from setpoint, use aggressive tuning parameters
+		//we're far from setpoint, or decreasing - use aggressive tuning parameters
 		PID_SetTunings(aggKp, aggKi, aggKd);
 	}
 	PID_Compute();          //Run the PID loop 
-	if (millis() - windowStartTime > WindowSize)
-	{
-		windowStartTime += WindowSize;
+	if (goal-tmpBeanMass > 5 ) Output = 250;  //brute force error correction
+	//PWM_on();
+	if (Output == 0) {  //PWM < 7 does not turn on SSR at all.
+		Output = 7;
 	}
-	PWM_on();
 	set_PWM(Output);     //Write out the output from the  PID loop to our PWM pin
+}
 
+
+/*---------------------------------updateTime-------------------------------------
+ *
+ *  updates the milliseconds passed while the roaster is ON (switch is in on pos)
+ *    these variables are set globally and are used in computing PID Settings
+ *
+ ----------------------------------------------------------------------------*/
+void updateTime() {
+	milliOnes += 0x01;
+	if (milliOnes >= 10){
+		milliTens += 1;
+		milliOnes = 0;
+		lcd_goto_xy(9, 2);
+		lcd_chr('0' + milliTens);
+		lcd_chr('0' + milliOnes);
+		if (milliTens >= 10) {
+			secondOnes += 1;
+			milliTens = 0;
+			lcd_goto_xy(7, 2);
+			lcd_chr('0' + secondOnes);
+			lcd_goto_xy(9, 2);
+			lcd_chr('0' + milliTens);
+			if (secondOnes >= 10) {
+				secondTens += 1;
+				secondOnes = 0;
+				lcd_goto_xy(6, 2);
+				lcd_chr('0' + secondTens);
+				lcd_chr('0' + secondOnes);
+				if (secondTens >= 6) {
+					minuteOnes += 1;
+					secondTens = 0;
+					lcd_goto_xy(4, 2);
+					lcd_chr('0' + minuteOnes);
+					lcd_goto_xy(6, 2);
+					lcd_chr('0' + secondTens);
+					if (minuteOnes >= 10) {
+						minuteTens += 1;
+						minuteOnes = 0;
+						lcd_goto_xy(3, 2);
+						lcd_chr('0' + minuteTens);
+						lcd_chr('0' + minuteOnes);
+						
+					}
+				}
+			}
+		}
+	}
+	lcd_goto_xy(10, 2);
+	lcd_chr('0' + milliOnes);
 }
 
 
@@ -648,6 +806,8 @@ int main(void) {
 	task4.elapsedTime = SMInput_period;		//Task current elapsed time.
 	task4.TickFct = &SMInput_Tick;			//Function pointer for the tick.
 
+	milliseconds = 0;
+	
 	// Set the timer and turn it on
 	TimerSet(GCD);
 	TimerOn();

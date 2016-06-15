@@ -3,7 +3,7 @@
  * (C)2013 Radu Motisan (C++ version)
  * www.pocketmagic.net
  * Based on a work by Tony Myatt - 2007
- * Updated to C code by Tyson Loveless, 2016
+ * Ported to C by Tyson Loveless, 2016
  */
 
 #include <stdio.h>

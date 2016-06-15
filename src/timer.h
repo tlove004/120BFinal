@@ -23,9 +23,17 @@ unsigned char secondTens;
 unsigned char milliOnes;
 unsigned char milliTens;
 
-//returns milliseconds since roast started
-unsigned long millis() {
-	return minuteTens * 600000 + minuteOnes * 60000 + secondTens * 10000 + secondOnes * 1000 + milliTens*10 + milliOnes;
+
+volatile unsigned long milliseconds;
+
+unsigned long millis(void)
+{
+	return milliseconds;
+}
+
+//returns seconds since roast started
+unsigned long seconds() {
+	return minuteTens * 600 + minuteOnes * 60 + secondTens * 10 + secondOnes;
 }
 
 // Set TimerISR() to tick every M ms
@@ -34,6 +42,7 @@ void TimerSet(unsigned long M) {
 	_avr_timer_cntcurr = _avr_timer_M;
 }
 
+
 void TimerOn() {
 	// AVR timer/counter controller register TCCR1
 	TCCR1B 	= 0x0B;	// bit3 = 1: CTC mode (clear timer on compare)
@@ -41,6 +50,7 @@ void TimerOn() {
 					// 00001011: 0x0B
 					// SO, 8 MHz clock or 8,000,000 /64 = 125,000 ticks/s
 					// Thus, TCNT1 register will count at 125,000 ticks/s
+
 
 	// AVR output compare register OCR1A.
 	OCR1A 	= 125;	// Timer interrupt will be generated when TCNT1==OCR1A
@@ -61,12 +71,14 @@ void TimerOn() {
 	SREG |= 0x80;	// 0x80: 1000000
 }
 
+
 void TimerOff() {
 	TCCR1B 	= 0x00; // bit3bit2bit1bit0=0000: timer off
 }
 
 void TimerISR() {
 	TimerFlag = 1;
+	++milliseconds;
 }
 
 // In our approach, the C programmer does not touch this ISR, but rather TimerISR()
@@ -79,5 +91,6 @@ ISR(TIMER1_COMPA_vect)
 		_avr_timer_cntcurr = _avr_timer_M;
 	}
 }
+
 
 #endif //TIMER_H

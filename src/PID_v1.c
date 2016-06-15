@@ -1,6 +1,7 @@
 ﻿/**********************************************************************************************
  * PID Library
  * Converted to C by Tyson Loveless - 05/26/2016
+ * Adapted for CS 120B Roaster Project
  * Based on Brett Beauregard's Arduino PID Library  - Version 1.0.1
  *
  * This Library is licensed under a GPLv3 License
