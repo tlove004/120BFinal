@@ -8,8 +8,9 @@ By Tyson Loveless
 
 This project aimed to overcome the hands-on process of roasting coffee in an air popcorn popper through temperature monitoring and PID control of the fan and heating elements. The resulting coffee roaster works by reading temperature inputs in two locations (one representing the heating element temperature and the other the temperature of the mass of beans), setting a temperature goal based on pre-defined roast profiles, and updating a PID output in order to modulate the heating element.
 
-See it in action!
 [![IMAGE ALT TEXT HERE](https://img.youtube.com/vi/CRpMMAHqQ1g/0.jpg)](https://www.youtube.com/watch?v=CRpMMAHqQ1g)
+
+See it in action!
 
 ## User Guide:
 
